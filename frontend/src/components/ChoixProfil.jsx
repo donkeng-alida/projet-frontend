@@ -1,9 +1,9 @@
-﻿import { useEffect, useMemo, useState } from 'react';
+import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Sun, Moon } from 'lucide-react';
 
 function ChoixProfil({ onRoleSelect, theme, onToggleTheme, langue, onLangueChange }) {
-  const [selectedRole, setSelectedRole] = useState('');
+  const [selectedRole, setSelectedRole] = useState(() => localStorage.getItem('role_selectionne') || '');
   const navigate = useNavigate();
 
   const textes = {
@@ -25,6 +25,7 @@ function ChoixProfil({ onRoleSelect, theme, onToggleTheme, langue, onLangueChang
     fr: [
       { id: 'cellule-info', emoji: '💻', titre: 'Cellule info', desc: 'Saisir les notes dans le systeme' },
       { id: 'admin', emoji: '🛡️', titre: 'Administrateur', desc: 'Creer les comptes utilisateurs' },
+      { id: 'superuser', emoji: '👑', titre: 'Superuser', desc: 'Superviser la plateforme et les acces' },
       { id: 'enseignant', emoji: '👨‍🏫', titre: 'Enseignant', desc: 'Corriger les examens et saisir les notes' },
       { id: 'coordonnateur', emoji: '🧭', titre: 'Coordonnateur', desc: 'Organiser les examens et verifier les notes' },
       { id: 'parent', emoji: '👨‍👩‍👧', titre: 'Parent', desc: 'Consulter les notes' },
@@ -33,6 +34,7 @@ function ChoixProfil({ onRoleSelect, theme, onToggleTheme, langue, onLangueChang
     en: [
       { id: 'cellule-info', emoji: '💻', titre: 'IT unit', desc: 'Enter grades into the system' },
       { id: 'admin', emoji: '🛡️', titre: 'Administrator', desc: 'Create user accounts' },
+      { id: 'superuser', emoji: '👑', titre: 'Superuser', desc: 'Oversee platform and access control' },
       { id: 'enseignant', emoji: '👨‍🏫', titre: 'Teacher', desc: 'Grade exams and enter marks' },
       { id: 'coordonnateur', emoji: '🧭', titre: 'Coordinator', desc: 'Organize exams and verify grades' },
       { id: 'parent', emoji: '👨‍👩‍👧', titre: 'Parent', desc: 'Check student grades' },
@@ -41,13 +43,8 @@ function ChoixProfil({ onRoleSelect, theme, onToggleTheme, langue, onLangueChang
   };
 
   const t = textes[langue] || textes.fr;
-  const roles = useMemo(() => rolesParLangue[langue] || rolesParLangue.fr, [langue]);
+  const roles = rolesParLangue[langue] || rolesParLangue.fr;
   const isDark = theme === 'dark';
-
-  useEffect(() => {
-    const roleSauve = localStorage.getItem('role_selectionne') || '';
-    setSelectedRole(roleSauve);
-  }, []);
 
   const selectRole = (role) => {
     setSelectedRole(role);
@@ -57,12 +54,28 @@ function ChoixProfil({ onRoleSelect, theme, onToggleTheme, langue, onLangueChang
       navigate('/admin');
       return;
     }
+    if (role === 'cellule-info') {
+      navigate('/cellule-info');
+      return;
+    }
+    if (role === 'superuser') {
+      navigate('/superuser');
+      return;
+    }
     if (role === 'enseignant') {
       navigate('/enseignant');
       return;
     }
     if (role === 'coordonnateur') {
       navigate('/coordonnateur');
+      return;
+    }
+    if (role === 'etudiant') {
+      navigate('/etudiant');
+      return;
+    }
+    if (role === 'parent') {
+      navigate('/parent');
     }
   };
 

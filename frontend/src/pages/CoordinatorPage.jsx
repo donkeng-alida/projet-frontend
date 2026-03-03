@@ -1,6 +1,7 @@
-﻿import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { ArrowLeft, BookOpen } from 'lucide-react';
+import { ArrowLeft, BookOpen, FileText } from 'lucide-react';
+import { clearSession, readSession, saveSession } from '../utils/session';
 
 function CoordinatorPage({ theme, langue, onToggleTheme, onLangueChange }) {
   const isDark = theme === 'dark';
@@ -13,13 +14,27 @@ function CoordinatorPage({ theme, langue, onToggleTheme, onLangueChange }) {
   const [notesPrev, setNotesPrev] = useState('');
   const [notesCount, setNotesCount] = useState(0);
   const [notesPageSize, setNotesPageSize] = useState(50);
+  const [noteDrafts, setNoteDrafts] = useState({});
+  const [noteEditPermissions, setNoteEditPermissions] = useState({});
+  const [savingNoteId, setSavingNoteId] = useState(null);
+  const [requests, setRequests] = useState([]);
+  const [isLoadingRequests, setIsLoadingRequests] = useState(false);
+  const [requestsError, setRequestsError] = useState('');
+  const [requestsPage, setRequestsPage] = useState(1);
+  const [requestsNext, setRequestsNext] = useState('');
+  const [requestsPrev, setRequestsPrev] = useState('');
+  const [requestsCount, setRequestsCount] = useState(0);
+  const [requestsPageSize, setRequestsPageSize] = useState(20);
 
   const [loginId, setLoginId] = useState('');
   const [loginPassword, setLoginPassword] = useState('');
-  const [authToken, setAuthToken] = useState(() => localStorage.getItem('auth_token') || '');
-  const [authRole, setAuthRole] = useState(() => localStorage.getItem('auth_role') || '');
+  const [authToken, setAuthToken] = useState(() => readSession().token);
+  const [authRole, setAuthRole] = useState(() => readSession().role);
+  const [authScope, setAuthScope] = useState(() => readSession().scope);
   const [authError, setAuthError] = useState('');
   const [authLoading, setAuthLoading] = useState(false);
+  const [publishStatus, setPublishStatus] = useState('');
+  const [isPublishing, setIsPublishing] = useState(false);
 
   const textes = {
     fr: {
@@ -28,11 +43,25 @@ function CoordinatorPage({ theme, langue, onToggleTheme, onLangueChange }) {
       notesRecues: 'Notes recues',
       notesIntro: 'Notes des enseignants pour votre cycle.',
       notesVides: 'Aucune note pour le moment.',
+      soumettreBulletin: 'Soumettre bulletin',
+      bulletinOk: 'Bulletin soumis aux etudiants et parents.',
+      bulletinErreur: 'Erreur lors de la soumission du bulletin.',
+      autoriserEnseignant: "Autoriser l'enseignant a modifier",
+      enregistrerNote: 'Enregistrer la note',
+      requetesRecues: 'Requetes etudiantes',
+      requetesIntro: 'Requetes des etudiants de votre filiere.',
+      requetesVides: 'Aucune requete pour le moment.',
       enseignantLib: 'Enseignant',
       etudiantLib: 'Etudiant',
       matiereLib: 'Matiere',
       noteLib: 'Note',
       cycleLib: 'Cycle',
+      filiereLib: 'Filiere',
+      objetLib: 'Objet',
+      statutLib: 'Statut',
+      justificatifLib: 'Justificatif',
+      ouvrirPdf: 'Ouvrir PDF',
+      telechargerPdf: 'Telecharger PDF',
       dateLib: 'Date',
       retourRoles: 'Retour aux roles',
       accueil: 'Accueil',
@@ -41,7 +70,7 @@ function CoordinatorPage({ theme, langue, onToggleTheme, onLangueChange }) {
       seConnecter: 'Se connecter',
       deconnexion: 'Se deconnecter',
       motDePasseLogin: 'Mot de passe',
-      accesRefuse: "Acces refuse : ce compte n'est pas coordonnateur.",
+      accesRefuse: "Acces refuse : ce compte n'est pas coordonnateur ou admin.",
       erreurLogin: 'Identifiants invalides.',
       champsRequis: 'Veuillez renseigner les champs.',
       chargement: 'Chargement...',
@@ -57,11 +86,25 @@ function CoordinatorPage({ theme, langue, onToggleTheme, onLangueChange }) {
       notesRecues: 'Received marks',
       notesIntro: 'Marks from teachers for your cycle.',
       notesVides: 'No marks yet.',
+      soumettreBulletin: 'Publish report card',
+      bulletinOk: 'Report card published to students and parents.',
+      bulletinErreur: 'Failed to publish report card.',
+      autoriserEnseignant: 'Allow teacher edit',
+      enregistrerNote: 'Save mark',
+      requetesRecues: 'Student requests',
+      requetesIntro: 'Requests from students in your track.',
+      requetesVides: 'No request yet.',
       enseignantLib: 'Teacher',
       etudiantLib: 'Student',
       matiereLib: 'Subject',
       noteLib: 'Mark',
       cycleLib: 'Cycle',
+      filiereLib: 'Track',
+      objetLib: 'Subject',
+      statutLib: 'Status',
+      justificatifLib: 'Attachment',
+      ouvrirPdf: 'Open PDF',
+      telechargerPdf: 'Download PDF',
       dateLib: 'Date',
       retourRoles: 'Back to roles',
       accueil: 'Home',
@@ -70,7 +113,7 @@ function CoordinatorPage({ theme, langue, onToggleTheme, onLangueChange }) {
       seConnecter: 'Sign in',
       deconnexion: 'Sign out',
       motDePasseLogin: 'Password',
-      accesRefuse: 'Access denied: this account is not coordinator.',
+      accesRefuse: 'Access denied: this account is not coordinator or admin.',
       erreurLogin: 'Invalid credentials.',
       champsRequis: 'Please fill in all fields.',
       chargement: 'Loading...',
@@ -83,7 +126,7 @@ function CoordinatorPage({ theme, langue, onToggleTheme, onLangueChange }) {
   };
 
   const t = textes[langue] || textes.fr;
-  const isCoordinator = authToken && authRole === 'coordonnateur';
+  const isCoordinator = authToken && (authScope === 'superuser' || authRole === 'coordonnateur' || authRole === 'admin');
 
   const fetchNotes = useCallback(async (page = 1, pageSize = notesPageSize) => {
     if (!authToken) return;
@@ -109,6 +152,16 @@ function CoordinatorPage({ theme, langue, onToggleTheme, onLangueChange }) {
       setNotesPage(page);
       setNotesPageSize(pageSize);
       setNotes(list);
+      setNoteDrafts(
+        Object.fromEntries(
+          list.map((item) => [item.id, item?.note === null || item?.note === undefined ? '' : String(item.note)])
+        )
+      );
+      setNoteEditPermissions(
+        Object.fromEntries(
+          list.map((item) => [item.id, Boolean(item?.teacher_can_edit)])
+        )
+      );
     } catch (err) {
       setNotes([]);
       setNotesError(err?.message || 'Erreur');
@@ -117,11 +170,49 @@ function CoordinatorPage({ theme, langue, onToggleTheme, onLangueChange }) {
     }
   }, [apiBase, authToken, notesPageSize]);
 
+  const fetchRequests = useCallback(async (page = 1, pageSize = requestsPageSize) => {
+    if (!authToken) return;
+    setIsLoadingRequests(true);
+    setRequestsError('');
+    try {
+      const res = await fetch(`${apiBase}/api/requests/?page=${page}&page_size=${pageSize}`, {
+        headers: { Authorization: `Token ${authToken}` },
+      });
+      if (!res.ok) {
+        const data = await res.json().catch(() => null);
+        throw new Error(data?.detail || 'requests_fetch_failed');
+      }
+      const data = await res.json();
+      const list = Array.isArray(data)
+        ? data
+        : Array.isArray(data?.results)
+        ? data.results
+        : [];
+      setRequestsCount(data?.count || list.length);
+      setRequestsNext(data?.next || '');
+      setRequestsPrev(data?.previous || '');
+      setRequestsPage(page);
+      setRequestsPageSize(pageSize);
+      setRequests(list);
+    } catch (err) {
+      setRequests([]);
+      setRequestsError(err?.message || 'Erreur');
+    } finally {
+      setIsLoadingRequests(false);
+    }
+  }, [apiBase, authToken, requestsPageSize]);
+
   useEffect(() => {
     if (isCoordinator) {
       fetchNotes(1, notesPageSize);
     }
   }, [isCoordinator, fetchNotes, notesPageSize]);
+
+  useEffect(() => {
+    if (isCoordinator) {
+      fetchRequests(1, requestsPageSize);
+    }
+  }, [isCoordinator, fetchRequests, requestsPageSize]);
 
   const handleLogin = async () => {
     if (!loginId.trim() || !loginPassword.trim()) {
@@ -146,21 +237,27 @@ function CoordinatorPage({ theme, langue, onToggleTheme, onLangueChange }) {
         return;
       }
 
-      if (data?.role !== 'coordonnateur') {
+      if (data?.role !== 'coordonnateur' && data?.role !== 'admin' && !data?.is_superuser) {
         setAuthError(t.accesRefuse);
-        localStorage.removeItem('auth_token');
-        localStorage.removeItem('auth_role');
+        clearSession();
         setAuthToken('');
         setAuthRole('');
+        setAuthScope('');
         return;
       }
+      const nextScope = data?.is_superuser ? 'superuser' : data.role === 'admin' ? 'admin' : 'coordinator';
 
-      localStorage.setItem('auth_token', data.token);
-      localStorage.setItem('auth_role', data.role);
+      saveSession({
+        token: data.token,
+        role: data.role,
+        user: data.username || data.email || loginId.trim(),
+        scope: nextScope,
+      });
       setAuthToken(data.token);
       setAuthRole(data.role);
+      setAuthScope(nextScope);
       setLoginPassword('');
-    } catch (error) {
+    } catch {
       setAuthError(t.erreurLogin);
     } finally {
       setAuthLoading(false);
@@ -168,12 +265,34 @@ function CoordinatorPage({ theme, langue, onToggleTheme, onLangueChange }) {
   };
 
   const handleLogout = () => {
-    localStorage.removeItem('auth_token');
-    localStorage.removeItem('auth_role');
+    clearSession();
     setAuthToken('');
     setAuthRole('');
+    setAuthScope('');
     setLoginId('');
     setLoginPassword('');
+  };
+
+  const handlePublishBulletin = async () => {
+    if (!authToken) return;
+    setPublishStatus('');
+    setIsPublishing(true);
+    try {
+      const res = await fetch(`${apiBase}/api/notes/publish/`, {
+        method: 'POST',
+        headers: { Authorization: `Token ${authToken}` },
+      });
+      const data = await res.json().catch(() => null);
+      if (!res.ok) {
+        throw new Error(data?.detail || t.bulletinErreur);
+      }
+      setPublishStatus(t.bulletinOk);
+      await fetchNotes(1, notesPageSize);
+    } catch (err) {
+      setPublishStatus(err?.message || t.bulletinErreur);
+    } finally {
+      setIsPublishing(false);
+    }
   };
 
   const formattedNotes = useMemo(
@@ -183,6 +302,48 @@ function CoordinatorPage({ theme, langue, onToggleTheme, onLangueChange }) {
         date: note?.created_at ? new Date(note.created_at).toLocaleString() : '-',
       })),
     [notes]
+  );
+
+  const saveNoteChanges = async (noteId) => {
+    if (!authToken) return;
+    setSavingNoteId(noteId);
+    try {
+      const payload = {
+        note: noteDrafts[noteId],
+        teacher_can_edit: Boolean(noteEditPermissions[noteId]),
+      };
+      const res = await fetch(`${apiBase}/api/notes/${noteId}/`, {
+        method: 'PATCH',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Token ${authToken}`,
+        },
+        body: JSON.stringify(payload),
+      });
+      const data = await res.json().catch(() => null);
+      if (!res.ok) {
+        throw new Error(data?.detail || 'note_update_failed');
+      }
+      await fetchNotes(notesPage, notesPageSize);
+    } catch (err) {
+      setNotesError(err?.message || 'Erreur');
+    } finally {
+      setSavingNoteId(null);
+    }
+  };
+
+  const formattedRequests = useMemo(
+    () =>
+      requests.map((item) => ({
+        ...item,
+        date: item?.created_at ? new Date(item.created_at).toLocaleString() : '-',
+        pdfUrl: item?.attachment
+          ? item.attachment.startsWith('http')
+            ? item.attachment
+            : `${apiBase}${item.attachment}`
+          : '',
+      })),
+    [apiBase, requests]
   );
 
   if (!isCoordinator) {
@@ -311,6 +472,15 @@ function CoordinatorPage({ theme, langue, onToggleTheme, onLangueChange }) {
             {t.notesRecues}
           </h2>
           <p className={`mb-4 text-sm ${isDark ? 'text-slate-300' : 'text-slate-600'}`}>{t.notesIntro}</p>
+          <button
+            type="button"
+            onClick={handlePublishBulletin}
+            disabled={isPublishing}
+            className="mb-3 rounded-full bg-rose-700 px-4 py-2 text-sm font-semibold text-white disabled:opacity-60"
+          >
+            {isPublishing ? '...' : t.soumettreBulletin}
+          </button>
+          {publishStatus ? <p className="mb-3 text-sm text-emerald-500">{publishStatus}</p> : null}
           <div className={`rounded-xl border px-3 py-4 text-sm ${isDark ? 'border-slate-700 bg-slate-800 text-slate-200' : 'border-slate-200 bg-slate-50 text-slate-700'}`}>
             {isLoadingNotes ? <p>{t.chargement}</p> : null}
             {!isLoadingNotes && notesError ? <p className="text-rose-500">{notesError}</p> : null}
@@ -342,7 +512,37 @@ function CoordinatorPage({ theme, langue, onToggleTheme, onLangueChange }) {
                     </div>
                     <div>
                       <p className="text-xs uppercase opacity-60">{t.noteLib}</p>
-                      <p className="font-semibold">{note.note}</p>
+                      <input
+                        type="number"
+                        min="0"
+                        max="20"
+                        step="0.01"
+                        value={noteDrafts[note.id] ?? ''}
+                        onChange={(event) =>
+                          setNoteDrafts((prev) => ({ ...prev, [note.id]: event.target.value }))
+                        }
+                        className={`w-full rounded-lg border px-2 py-1 text-sm ${
+                          isDark ? 'border-slate-700 bg-slate-950 text-slate-100' : 'border-slate-300 bg-white text-slate-900'
+                        }`}
+                      />
+                      <label className="mt-2 flex items-center gap-2 text-xs">
+                        <input
+                          type="checkbox"
+                          checked={Boolean(noteEditPermissions[note.id])}
+                          onChange={(event) =>
+                            setNoteEditPermissions((prev) => ({ ...prev, [note.id]: event.target.checked }))
+                          }
+                        />
+                        {t.autoriserEnseignant}
+                      </label>
+                      <button
+                        type="button"
+                        onClick={() => saveNoteChanges(note.id)}
+                        disabled={savingNoteId === note.id}
+                        className="mt-2 rounded-lg bg-rose-700 px-2 py-1 text-xs font-semibold text-white disabled:opacity-60"
+                      >
+                        {savingNoteId === note.id ? '...' : t.enregistrerNote}
+                      </button>
                     </div>
                     <div>
                       <p className="text-xs uppercase opacity-60">{t.dateLib}</p>
@@ -399,6 +599,129 @@ function CoordinatorPage({ theme, langue, onToggleTheme, onLangueChange }) {
                 }`}
               >
                 {t.suivant} →
+              </button>
+            </div>
+          </div>
+        </section>
+
+        <section className={`mt-6 rounded-3xl border p-5 ${isDark ? 'border-slate-800 bg-slate-900' : 'border-slate-200 bg-white'}`}>
+          <h2 className="mb-2 inline-flex items-center gap-2 text-xl font-semibold">
+            <FileText size={20} className="text-rose-800" />
+            {t.requetesRecues}
+          </h2>
+          <p className={`mb-4 text-sm ${isDark ? 'text-slate-300' : 'text-slate-600'}`}>{t.requetesIntro}</p>
+          <div className={`rounded-xl border px-3 py-4 text-sm ${isDark ? 'border-slate-700 bg-slate-800 text-slate-200' : 'border-slate-200 bg-slate-50 text-slate-700'}`}>
+            {isLoadingRequests ? <p>{t.chargement}</p> : null}
+            {!isLoadingRequests && requestsError ? <p className="text-rose-500">{requestsError}</p> : null}
+            {!isLoadingRequests && !requestsError && formattedRequests.length === 0 ? <p>{t.requetesVides}</p> : null}
+            {formattedRequests.length > 0 ? (
+              <div className="space-y-2">
+                {formattedRequests.map((item) => (
+                  <div
+                    key={item.id}
+                    className={`grid gap-2 rounded-xl border px-3 py-2 md:grid-cols-7 ${
+                      isDark ? 'border-slate-700 bg-slate-900' : 'border-slate-200 bg-white'
+                    }`}
+                  >
+                    <div>
+                      <p className="text-xs uppercase opacity-60">{t.etudiantLib}</p>
+                      <p className="font-semibold">{item.student_username || '-'}</p>
+                    </div>
+                    <div>
+                      <p className="text-xs uppercase opacity-60">{t.cycleLib}</p>
+                      <p className="font-semibold">{item.cycle || '-'}</p>
+                    </div>
+                    <div>
+                      <p className="text-xs uppercase opacity-60">{t.filiereLib}</p>
+                      <p className="font-semibold">{item.filiere || '-'}</p>
+                    </div>
+                    <div>
+                      <p className="text-xs uppercase opacity-60">{t.objetLib}</p>
+                      <p className="font-semibold">{item.subject || '-'}</p>
+                    </div>
+                    <div>
+                      <p className="text-xs uppercase opacity-60">{t.statutLib}</p>
+                      <p className="font-semibold">{item.status || '-'}</p>
+                    </div>
+                    <div>
+                      <p className="text-xs uppercase opacity-60">{t.justificatifLib}</p>
+                      {item.pdfUrl ? (
+                        <div className="flex flex-col gap-1">
+                          <a
+                            href={item.pdfUrl}
+                            target="_blank"
+                            rel="noreferrer"
+                            className="font-semibold text-rose-700 underline"
+                          >
+                            {t.ouvrirPdf}
+                          </a>
+                          <a
+                            href={item.pdfUrl}
+                            download
+                            className="font-semibold text-rose-700 underline"
+                          >
+                            {t.telechargerPdf}
+                          </a>
+                        </div>
+                      ) : (
+                        <p className="font-semibold">-</p>
+                      )}
+                    </div>
+                    <div>
+                      <p className="text-xs uppercase opacity-60">{t.dateLib}</p>
+                      <p className="font-semibold">{item.date}</p>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            ) : null}
+          </div>
+          <div className="mt-4 flex flex-wrap items-center justify-between gap-3 text-sm">
+            <span className={`${isDark ? 'text-slate-400' : 'text-slate-600'}`}>
+              {requestsCount > 0 ? `${requestsCount} requetes` : ''}
+            </span>
+            <div className="flex flex-wrap items-center gap-2">
+              <label className="flex items-center gap-2 text-xs">
+                {t.taillePage}
+                <select
+                  className={`rounded-full border px-2 py-1 text-xs ${isDark ? 'border-slate-700 bg-slate-900' : 'border-slate-300 bg-white'}`}
+                  value={requestsPageSize}
+                  onChange={(event) => {
+                    const size = Number(event.target.value);
+                    setRequestsPageSize(size);
+                    fetchRequests(1, size);
+                  }}
+                >
+                  <option value={10}>10</option>
+                  <option value={20}>20</option>
+                  <option value={50}>50</option>
+                  <option value={100}>100</option>
+                </select>
+              </label>
+              <button
+                type="button"
+                onClick={() => requestsPrev && fetchRequests(requestsPage - 1, requestsPageSize)}
+                disabled={!requestsPrev || isLoadingRequests}
+                className={`rounded-full px-4 py-2 font-semibold ${
+                  requestsPrev && !isLoadingRequests
+                    ? 'bg-slate-200 text-slate-800'
+                    : 'bg-slate-100 text-slate-400'
+                }`}
+              >
+                â† {t.precedent}
+              </button>
+              <span className={`${isDark ? 'text-slate-300' : 'text-slate-700'}`}>{t.page} {requestsPage}</span>
+              <button
+                type="button"
+                onClick={() => requestsNext && fetchRequests(requestsPage + 1, requestsPageSize)}
+                disabled={!requestsNext || isLoadingRequests}
+                className={`rounded-full px-4 py-2 font-semibold ${
+                  requestsNext && !isLoadingRequests
+                    ? 'bg-rose-800 text-white'
+                    : 'bg-rose-200 text-white/60'
+                }`}
+              >
+                {t.suivant} â†’
               </button>
             </div>
           </div>

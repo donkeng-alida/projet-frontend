@@ -17,9 +17,15 @@ class NoteSerializer(serializers.ModelSerializer):
             "matiere",
             "etudiant",
             "note",
+            "teacher_can_edit",
+            "visible_to_teacher",
+            "visible_to_coordinator",
+            "is_published",
+            "published_at",
             "created_at",
+            "updated_at",
         ]
-        read_only_fields = ["id", "teacher", "teacher_username", "created_at"]
+        read_only_fields = ["id", "teacher", "teacher_username", "created_at", "updated_at"]
 
     def get_teacher_username(self, obj):
         return getattr(obj.teacher, "username", "")
