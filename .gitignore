@@ -38,3 +38,6 @@ frontend/.env
 
 # Codex / Cursor
 .cursor/
+
+# Vercel
+.vercel/
