@@ -1,4 +1,4 @@
-﻿import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { clearSession, readSession, saveSession } from '../utils/session'
 
@@ -94,14 +94,13 @@ const filieresByCycle = {
 }
 
 const matieres = ['Mathématiques', 'Programmation', 'Réseaux', 'Algorithmique']
-const etudiants = ['Alice', 'Bob', 'David', 'Sarah']
 
-const baseNotes = (selectedMatieres) => {
+const baseNotes = (selectedMatieres, studentKeys) => {
   const notes = {}
   selectedMatieres.forEach((matiere) => {
     notes[matiere] = {}
-    etudiants.forEach((etudiant) => {
-      notes[matiere][etudiant] = ''
+    studentKeys.forEach((studentKey) => {
+      notes[matiere][studentKey] = ''
     })
   })
   return notes
@@ -114,6 +113,10 @@ const textes = {
     filiere: 'Choisir la Filière',
     matiere: 'Choisir la Matière',
     notes: 'Saisie des Notes',
+    typeExamen: "Type d'examen",
+    typeRequis: "Veuillez choisir le type d'examen.",
+    ccLabel: 'CC (Contrôle continu)',
+    snLabel: 'SN (Session normale)',
     suivant: 'Suivant →',
     retour: 'Retour',
     envoyer: 'Envoyer',
@@ -145,6 +148,10 @@ const textes = {
     filiere: 'Choose the Track',
     matiere: 'Choose the Subject',
     notes: 'Enter Marks',
+    typeExamen: 'Exam type',
+    typeRequis: 'Please choose the exam type.',
+    ccLabel: 'CC (Continuous assessment)',
+    snLabel: 'SN (Normal session)',
     suivant: 'Next →',
     retour: 'Back',
     envoyer: 'Send',
@@ -178,6 +185,7 @@ function TeacherPage() {
   const [selectedCycle, setSelectedCycle] = useState('')
   const [selectedFilieres, setSelectedFilieres] = useState([])
   const [selectedMatieres, setSelectedMatieres] = useState([])
+  const [noteType, setNoteType] = useState('CC')
   const [notes, setNotes] = useState({})
   const [loading, setLoading] = useState(false)
   const [theme, setTheme] = useState('light')
@@ -193,6 +201,9 @@ function TeacherPage() {
   const [submittedNotes, setSubmittedNotes] = useState([])
   const [isLoadingSubmitted, setIsLoadingSubmitted] = useState(false)
   const [submittedError, setSubmittedError] = useState('')
+  const [students, setStudents] = useState([])
+  const [isLoadingStudents, setIsLoadingStudents] = useState(false)
+  const [studentsError, setStudentsError] = useState('')
   const [noteDrafts, setNoteDrafts] = useState({})
   const [savingNoteId, setSavingNoteId] = useState(null)
   const [notesView, setNotesView] = useState('flow')
@@ -200,6 +211,42 @@ function TeacherPage() {
   const isDark = theme === 'dark'
   const t = textes[langue]
   const isTeacher = authToken && (authScope === 'superuser' || authRole === 'enseignant' || authRole === 'admin')
+  const studentKeys = useMemo(
+    () => students.map((u) => String(u?.username || u?.email || '')).map((v) => v.trim()).filter(Boolean),
+    [students]
+  )
+
+  const getStudentLabel = (student) => {
+    const fullName = `${student?.first_name || ''} ${student?.last_name || ''}`.trim()
+    return fullName || student?.username || student?.email || '-'
+  }
+
+  /* ── Fetch étudiants par cycle ── */
+  const fetchStudents = useCallback(async () => {
+    const token = authToken || readSession().token
+    if (!token || !selectedCycle) return
+    setIsLoadingStudents(true)
+    setStudentsError('')
+    try {
+      const params = new URLSearchParams({ cycle: selectedCycle })
+      const res = await fetch(`${apiBase}/api/accounts/students/?${params.toString()}`, {
+        headers: { Authorization: `Token ${token}` },
+      })
+      const data = await res.json().catch(() => null)
+      if (!res.ok) throw new Error(data?.detail || 'students_fetch_failed')
+      const list = Array.isArray(data)
+        ? data
+        : Array.isArray(data?.results)
+        ? data.results
+        : []
+      setStudents(list)
+    } catch (err) {
+      setStudents([])
+      setStudentsError(err?.message || 'Erreur')
+    } finally {
+      setIsLoadingStudents(false)
+    }
+  }, [apiBase, authToken, selectedCycle])
 
   /* ── Fetch notes soumises ── */
   const fetchSubmittedNotes = useCallback(async () => {
@@ -239,6 +286,11 @@ function TeacherPage() {
     if (isTeacher) fetchSubmittedNotes()
   }, [isTeacher, fetchSubmittedNotes])
 
+  useEffect(() => {
+    if (!isTeacher || !selectedCycle) return
+    fetchStudents()
+  }, [isTeacher, selectedCycle, fetchStudents])
+
   /* ── Helpers navigation ── */
   const showLoader = (callback) => {
     setLoading(true)
@@ -260,7 +312,9 @@ function TeacherPage() {
 
   const nextToNotes = () => {
     if (selectedMatieres.length === 0) { alert(t.matiereRequise); return }
-    showLoader(() => { setNotes(baseNotes(selectedMatieres)); setStep(4) })
+    if (isLoadingStudents) { alert(langue === 'fr' ? 'Chargement des étudiants...' : 'Loading students...'); return }
+    if (studentKeys.length === 0) { alert(langue === 'fr' ? 'Aucun étudiant trouvé pour ce cycle.' : 'No student found for this cycle.'); return }
+    showLoader(() => { setNotes(baseNotes(selectedMatieres, studentKeys)); setStep(4) })
   }
 
   const goBack = (to) => setStep(to)
@@ -280,16 +334,17 @@ function TeacherPage() {
     setSubmitStatus('')
     const token = authToken || readSession().token
     if (!token) { setSubmitStatus(t.erreurLogin); return }
+    if (!noteType) { setSubmitStatus(t.typeRequis); return }
     fetch(`${apiBase}/api/notes/`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', Authorization: `Token ${token}` },
-      body: JSON.stringify({ cycle: selectedCycle, filieres: selectedFilieres, notes }),
+      body: JSON.stringify({ cycle: selectedCycle, filieres: selectedFilieres, note_type: noteType, notes }),
     })
       .then(async (res) => {
         const data = await res.json().catch(() => null)
         if (!res.ok) throw new Error(data?.detail || 'Erreur')
         setSubmitStatus(t.envoyees)
-        setNotes(baseNotes(selectedMatieres))
+        setNotes(baseNotes(selectedMatieres, studentKeys))
         fetchSubmittedNotes()
       })
       .catch(() => setSubmitStatus(t.erreurEnvoi))
@@ -570,29 +625,63 @@ function TeacherPage() {
             <span className="flex h-8 w-8 items-center justify-center rounded-full bg-rose-800 text-white">4</span>
             {t.notes}
           </div>
+          <div className={`mb-4 rounded-2xl p-4 ${innerBg}`}>
+            <label className="mb-2 block text-xs font-semibold uppercase tracking-wide opacity-70">
+              {t.typeExamen}
+            </label>
+            <select
+              value={noteType}
+              onChange={(e) => setNoteType(e.target.value)}
+              className={`w-full rounded-xl border px-3 py-2 text-sm outline-none ${
+                isDark ? 'border-slate-700 bg-slate-950 text-slate-100' : 'border-slate-300 bg-white text-slate-900'
+              }`}
+            >
+              <option value="CC">{t.ccLabel}</option>
+              <option value="SN">{t.snLabel}</option>
+            </select>
+          </div>
+          <button
+            type="button"
+            onClick={fetchStudents}
+            disabled={!selectedCycle || isLoadingStudents}
+            className={`mb-3 rounded-xl px-4 py-2 text-xs font-semibold transition ${
+              isDark
+                ? 'border border-slate-700 text-slate-200 hover:border-rose-700 hover:text-white disabled:opacity-60'
+                : 'border border-rose-700 text-rose-700 hover:bg-rose-50 disabled:opacity-60'
+            }`}
+          >
+            {isLoadingStudents ? '...' : (langue === 'fr' ? 'Actualiser les étudiants' : 'Refresh students')}
+          </button>
           <>
               <div className={`rounded-2xl p-4 ${innerBg}`}>
                 {selectedMatieres.map((matiere) => (
                   <div key={matiere} className="mb-5">
                     <h4 className="mb-2 text-sm font-semibold text-rose-800">{matiere}</h4>
-                    {etudiants.map((etudiant) => (
-                      <div
-                        key={`${matiere}-${etudiant}`}
-                        className={`mb-2 grid grid-cols-[1fr_80px] items-center gap-3 rounded-xl px-3 py-2 ${rowBg}`}
-                      >
-                        <span>{etudiant}</span>
-                        <input
-                          type="number"
-                          min="0"
-                          max="20"
-                          value={notes[matiere]?.[etudiant] ?? ''}
-                          onChange={(e) => handleNoteChange(matiere, etudiant, e.target.value)}
-                          className={`rounded-lg border px-2 py-1 text-sm outline-none ${
-                            isDark ? 'border-slate-700 bg-slate-950 text-slate-100' : 'border-slate-300 bg-white text-slate-900'
-                          }`}
-                        />
-                      </div>
-                    ))}
+                    {isLoadingStudents ? <p className="italic opacity-60">{langue === 'fr' ? 'Chargement des étudiants...' : 'Loading students...'}</p> : null}
+                    {!isLoadingStudents && studentsError ? <p className="text-rose-500">{studentsError}</p> : null}
+                    {!isLoadingStudents && !studentsError && students.length === 0 ? <p className="italic opacity-60">{langue === 'fr' ? 'Aucun étudiant pour ce cycle.' : 'No student for this cycle.'}</p> : null}
+                    {students.map((student) => {
+                      const studentKey = String(student?.username || student?.email || '').trim()
+                      if (!studentKey) return null
+                      return (
+                        <div
+                          key={`${matiere}-${studentKey}`}
+                          className={`mb-2 grid grid-cols-[1fr_80px] items-center gap-3 rounded-xl px-3 py-2 ${rowBg}`}
+                        >
+                          <span>{getStudentLabel(student)}</span>
+                          <input
+                            type="number"
+                            min="0"
+                            max="20"
+                            value={notes[matiere]?.[studentKey] ?? ''}
+                            onChange={(e) => handleNoteChange(matiere, studentKey, e.target.value)}
+                            className={`rounded-lg border px-2 py-1 text-sm outline-none ${
+                              isDark ? 'border-slate-700 bg-slate-950 text-slate-100' : 'border-slate-300 bg-white text-slate-900'
+                            }`}
+                          />
+                        </div>
+                      )
+                    })}
                   </div>
                 ))}
               </div>

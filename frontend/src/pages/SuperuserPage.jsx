@@ -40,8 +40,8 @@ function SuperuserPage({ langue, onLangueChange }) {
   const [email, setEmail] = useState('');
   const [role, setRole] = useState('');
   const [cycle, setCycle] = useState('');
-  const [password, setPassword] = useState('');
-  const [passwordConfirm, setPasswordConfirm] = useState('');
+  const [generatedStudentPassword, setGeneratedStudentPassword] = useState('');
+  const [generatedStudentLogin, setGeneratedStudentLogin] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
 
   const [emailDrafts, setEmailDrafts] = useState({});
@@ -66,7 +66,13 @@ function SuperuserPage({ langue, onLangueChange }) {
       activityTitle: 'Journal d activite', activityIntro: 'Dernieres actions de la plateforme (creation, mise a jour, suppression, connexions).', noActivity: 'Aucun evenement pour le moment.',
       pwdMismatch: 'Les mots de passe ne correspondent pas.', pwdMin: 'Le mot de passe doit contenir au moins 6 caracteres.',
       mustChooseRole: 'Merci de choisir un role.', invalidEmail: 'Merci de saisir un email valide.', missingName: 'Merci de saisir le nom complet.',
-      missingPassword: 'Merci de saisir un mot de passe.', cycleRequired: 'Merci de renseigner le cycle du coordonnateur.',
+      missingPassword: 'Merci de saisir un mot de passe.', cycleRequired: 'Merci de renseigner le cycle.',
+      mdpAutoEtudiant: 'Mot de passe genere automatiquement par le serveur.',
+      mdpGenere: 'Mot de passe genere (a communiquer a l utilisateur)',
+      identifiantGenere: 'Identifiant (email)',
+      copier: 'Copier',
+      copieOk: 'Mot de passe copie.',
+      copieKo: 'Copie impossible.',
     },
     en: {
       title: 'Superuser Control Room', subtitle: 'Full management of users and access', loginTitle: 'Superuser login',
@@ -83,7 +89,13 @@ function SuperuserPage({ langue, onLangueChange }) {
       activityTitle: 'Activity feed', activityIntro: 'Latest platform actions (create, update, delete, logins).', noActivity: 'No event yet.',
       pwdMismatch: 'Passwords do not match.', pwdMin: 'Password must be at least 6 chars.', mustChooseRole: 'Please choose a role.',
       invalidEmail: 'Please enter a valid email.', missingName: 'Please enter full name.', missingPassword: 'Please enter a password.',
-      cycleRequired: 'Please enter coordinator cycle.',
+      cycleRequired: 'Please enter the cycle.',
+      mdpAutoEtudiant: 'Password is generated automatically by the server.',
+      mdpGenere: 'Generated password (share with the user)',
+      identifiantGenere: 'Login (email)',
+      copier: 'Copy',
+      copieOk: 'Password copied.',
+      copieKo: 'Copy failed.',
     },
   };
 
@@ -299,26 +311,51 @@ function SuperuserPage({ langue, onLangueChange }) {
     if (!fullName.trim()) return setStatus({ type: 'error', message: t.missingName });
     if (!email.includes('@')) return setStatus({ type: 'error', message: t.invalidEmail });
     if (!role) return setStatus({ type: 'error', message: t.mustChooseRole });
-    if (role === 'coordonnateur' && !cycle.trim()) return setStatus({ type: 'error', message: t.cycleRequired });
-    if (!password.trim()) return setStatus({ type: 'error', message: t.missingPassword });
-    if (password !== passwordConfirm) return setStatus({ type: 'error', message: t.pwdMismatch });
+    if ((role === 'coordonnateur' || role === 'etudiant') && !cycle.trim()) return setStatus({ type: 'error', message: t.cycleRequired });
     if (!authToken) return setStatus({ type: 'error', message: t.accessDenied });
 
     const parts = fullName.trim().split(/\s+/);
+    const username = email.trim().toLowerCase();
     setIsSubmitting(true);
     setStatus({ type: '', message: '' });
+    setGeneratedStudentPassword('');
+    setGeneratedStudentLogin('');
     try {
+      const payload = {
+        username,
+        first_name: parts[0] || '',
+        last_name: parts.slice(1).join(' '),
+        email: username,
+        role,
+        cycle: role === 'coordonnateur' || role === 'etudiant' ? cycle.trim() : '',
+      };
+
       const res = await fetch(`${apiBase}/api/accounts/users/`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', Authorization: `Token ${authToken}` },
-        body: JSON.stringify({
-          username: email.trim().toLowerCase(), first_name: parts[0] || '', last_name: parts.slice(1).join(' '),
-          email: email.trim().toLowerCase(), role, cycle: role === 'coordonnateur' ? cycle.trim() : '', password,
-        }),
+        body: JSON.stringify(payload),
       });
-      if (!res.ok) throw new Error(await toErrorMessage(res, t.createError));
+
+      const createdUser = await res.json().catch(() => null);
+      if (!res.ok) {
+        let detail = '';
+        try {
+          const data = createdUser;
+          if (data && typeof data === 'object') {
+            detail = data?.detail || Object.entries(data)
+              .map(([key, value]) => (Array.isArray(value) ? `${key}: ${value.join(' ')}` : typeof value === 'string' ? `${key}: ${value}` : ''))
+              .filter(Boolean)
+              .join(' | ');
+          }
+        } catch { detail = ''; }
+        throw new Error(detail || t.createError);
+      }
       setStatus({ type: 'success', message: t.userCreated });
-      setFullName(''); setEmail(''); setRole(''); setCycle(''); setPassword(''); setPasswordConfirm('');
+      if (createdUser?.generated_password) {
+        setGeneratedStudentPassword(String(createdUser.generated_password));
+        setGeneratedStudentLogin(String(createdUser?.username || createdUser?.email || username));
+      }
+      setFullName(''); setEmail(''); setRole(''); setCycle('');
       await fetchUsers(1);
       await fetchAuditEvents();
     } catch (error) {
@@ -328,14 +365,28 @@ function SuperuserPage({ langue, onLangueChange }) {
     }
   };
 
+  const copyGeneratedStudentPassword = async () => {
+    if (!generatedStudentPassword) return;
+    try {
+      await navigator.clipboard.writeText(generatedStudentPassword);
+      setStatus({ type: 'success', message: t.copieOk });
+    } catch {
+      setStatus({ type: 'error', message: t.copieKo });
+    }
+  };
+
   const applyUserDraft = (user) => {
     const draftRole = roleDrafts[user.id] || '';
     const draftCycle = cycleDrafts[user.id] || '';
     const draftEmail = (emailDrafts[user.id] || '').trim().toLowerCase();
     if (!draftEmail.includes('@')) return setStatus({ type: 'error', message: t.invalidEmail });
     if (!draftRole) return setStatus({ type: 'error', message: t.mustChooseRole });
-    if (draftRole === 'coordonnateur' && !draftCycle.trim()) return setStatus({ type: 'error', message: t.cycleRequired });
-    patchUser(user.id, { email: draftEmail, role: draftRole, cycle: draftRole === 'coordonnateur' ? draftCycle.trim() : '' });
+    if ((draftRole === 'coordonnateur' || draftRole === 'etudiant') && !draftCycle.trim()) return setStatus({ type: 'error', message: t.cycleRequired });
+    patchUser(user.id, {
+      email: draftEmail,
+      role: draftRole,
+      cycle: (draftRole === 'coordonnateur' || draftRole === 'etudiant') ? draftCycle.trim() : '',
+    });
   };
 
   const applyPasswordDraft = (user) => {
@@ -463,11 +514,30 @@ function SuperuserPage({ langue, onLangueChange }) {
                 <option value="">{t.role}</option>
                 {roleOptions.map((opt) => <option key={opt} value={opt}>{roleLabel(opt)}</option>)}
               </select>
-              {role === 'coordonnateur' ? <input type="text" className="rounded-xl border border-slate-700 bg-slate-900/70 px-3 py-2 outline-none focus:border-rose-500" placeholder={t.cycle} value={cycle} onChange={(e) => setCycle(e.target.value)} /> : null}
-              <input type="password" className="rounded-xl border border-slate-700 bg-slate-900/70 px-3 py-2 outline-none focus:border-rose-500" placeholder={t.password} value={password} onChange={(e) => setPassword(e.target.value)} />
-              <input type="password" className="rounded-xl border border-slate-700 bg-slate-900/70 px-3 py-2 outline-none focus:border-rose-500" placeholder={t.confirmPassword} value={passwordConfirm} onChange={(e) => setPasswordConfirm(e.target.value)} />
+              {(role === 'coordonnateur' || role === 'etudiant') ? <input type="text" className="rounded-xl border border-slate-700 bg-slate-900/70 px-3 py-2 outline-none focus:border-rose-500" placeholder={t.cycle} value={cycle} onChange={(e) => setCycle(e.target.value)} /> : null}
+              <div className="rounded-xl border border-slate-700 bg-slate-900/70 px-3 py-2 text-sm text-slate-300">
+                {t.mdpAutoEtudiant}
+              </div>
             </div>
             <button className="mt-4 w-full rounded-xl bg-rose-700 px-5 py-2 font-semibold hover:bg-rose-600 disabled:opacity-60" type="button" onClick={handleCreateUser} disabled={isSubmitting}>{isSubmitting ? '...' : t.create}</button>
+            {generatedStudentPassword ? (
+              <div className="mt-4 rounded-2xl border border-amber-300/30 bg-amber-300/10 px-4 py-4">
+                <p className="text-sm font-semibold text-amber-200">{t.mdpGenere}</p>
+                {generatedStudentLogin ? (
+                  <p className="mt-1 text-xs text-amber-100/80">
+                    {t.identifiantGenere}: <span className="font-mono">{generatedStudentLogin}</span>
+                  </p>
+                ) : null}
+                <div className="mt-3 flex flex-col gap-2 sm:flex-row sm:items-center">
+                  <div className="flex-1 rounded-xl border border-amber-300/30 bg-black/20 px-3 py-2 font-mono text-sm text-amber-100">
+                    {generatedStudentPassword}
+                  </div>
+                  <button type="button" className="rounded-xl border border-amber-300/40 px-4 py-2 text-sm font-semibold text-amber-100 hover:bg-amber-300/10" onClick={copyGeneratedStudentPassword}>
+                    {t.copier}
+                  </button>
+                </div>
+              </div>
+            ) : null}
           </article>
 
           <article className="rounded-3xl border border-white/10 bg-white/5 p-5 backdrop-blur lg:col-span-8">
@@ -507,7 +577,7 @@ function SuperuserPage({ langue, onLangueChange }) {
                     <div className="mt-3 grid gap-3 md:grid-cols-2">
                       <input type="email" className="rounded-xl border border-slate-700 bg-slate-900/70 px-3 py-2 text-sm outline-none focus:border-rose-500" value={emailDrafts[u.id] || ''} onChange={(e) => setEmailDrafts((prev) => ({ ...prev, [u.id]: e.target.value }))} placeholder={t.userEmail} />
                       <select className="rounded-xl border border-slate-700 bg-slate-900/70 px-3 py-2 text-sm outline-none focus:border-rose-500" value={roleDrafts[u.id] || ''} onChange={(e) => setRoleDrafts((prev) => ({ ...prev, [u.id]: e.target.value }))}><option value="">{t.role}</option>{roleOptions.map((opt) => <option key={opt} value={opt}>{roleLabel(opt)}</option>)}</select>
-                      {draftRole === 'coordonnateur' ? <input type="text" className="rounded-xl border border-slate-700 bg-slate-900/70 px-3 py-2 text-sm outline-none focus:border-rose-500" value={cycleDrafts[u.id] || ''} onChange={(e) => setCycleDrafts((prev) => ({ ...prev, [u.id]: e.target.value }))} placeholder={t.cycle} /> : null}
+                      {(draftRole === 'coordonnateur' || draftRole === 'etudiant') ? <input type="text" className="rounded-xl border border-slate-700 bg-slate-900/70 px-3 py-2 text-sm outline-none focus:border-rose-500" value={cycleDrafts[u.id] || ''} onChange={(e) => setCycleDrafts((prev) => ({ ...prev, [u.id]: e.target.value }))} placeholder={t.cycle} /> : null}
                       <button type="button" onClick={() => applyUserDraft(u)} disabled={isBusy} className="rounded-xl bg-slate-200 px-4 py-2 text-sm font-semibold text-slate-900 hover:bg-white disabled:opacity-60">{t.save}</button>
                     </div>
 

@@ -12,13 +12,16 @@ from rest_framework.views import APIView
 from .models import Note
 from .serializers import NoteSerializer
 
+MIN_NOTE = Decimal("1")
+MAX_NOTE = Decimal("20")
+
 
 def coordinator_can_access_note(user, note):
-    filiere = (getattr(user, "filiere", "") or "").strip().lower()
-    if not filiere:
+    cycle = (getattr(user, "cycle", "") or "").strip().lower()
+    if not cycle:
         return False
-    filieres = note.filieres if isinstance(note.filieres, list) else []
-    return any(str(item).strip().lower() == filiere for item in filieres)
+    note_cycle = (getattr(note, "cycle", "") or "").strip().lower()
+    return note_cycle == cycle
 
 
 class NotesView(APIView):
@@ -35,24 +38,15 @@ class NotesView(APIView):
         if role == "admin":
             notes = Note.objects.all().order_by("-created_at")[:500]
         elif role == "coordonnateur":
-            filiere = (getattr(request.user, "filiere", "") or "").strip()
-            if not filiere:
+            cycle = (getattr(request.user, "cycle", "") or "").strip()
+            if not cycle:
                 return Response(
-                    {"detail": "Coordinator filiere is missing."},
+                    {"detail": "Coordinator cycle is missing."},
                     status=status.HTTP_400_BAD_REQUEST,
                 )
-            # Notes store tracks in a JSON list; filter in Python for robust case-insensitive matching.
-            notes = [
-                note
-                for note in Note.objects.all().order_by("-created_at")[:500]
-                if note.visible_to_coordinator
-                and isinstance(note.filieres, list)
-                and any(str(item).strip().lower() == filiere.lower() for item in note.filieres)
-            ]
+            notes = Note.objects.filter(visible_to_coordinator=True, cycle__iexact=cycle).order_by("-created_at")[:500]
         elif role == "enseignant":
-            notes = Note.objects.filter(
-                teacher=request.user, visible_to_teacher=True
-            ).order_by("-created_at")[:200]
+            notes = Note.objects.filter(teacher=request.user).order_by("-created_at")[:200]
         elif role == "cellule-info":
             notes = Note.objects.filter(teacher_can_edit=True).order_by("-updated_at", "-created_at")[:500]
         elif role == "etudiant":
@@ -114,10 +108,16 @@ class NotesView(APIView):
         cycle = (payload.get("cycle") or "").strip()
         filieres = payload.get("filieres") or []
         notes_data = payload.get("notes") or {}
+        note_type = (payload.get("note_type") or "").strip().upper()
 
         if not cycle or not isinstance(filieres, list) or not isinstance(notes_data, dict):
             return Response(
                 {"detail": "Invalid payload."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        if note_type not in {"CC", "SN"}:
+            return Response(
+                {"detail": "note_type must be CC or SN."},
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
@@ -132,6 +132,11 @@ class NotesView(APIView):
                     note_decimal = Decimal(str(note_value))
                 except (InvalidOperation, ValueError):
                     continue
+                if note_decimal < MIN_NOTE or note_decimal > MAX_NOTE:
+                    return Response(
+                        {"detail": "Each note must be between 1 and 20."},
+                        status=status.HTTP_400_BAD_REQUEST,
+                    )
                 notes_to_create.append(
                     Note(
                         teacher=request.user,
@@ -139,7 +144,10 @@ class NotesView(APIView):
                         filieres=filieres,
                         matiere=str(matiere),
                         etudiant=str(etudiant),
+                        note_type=note_type,
                         note=note_decimal,
+                        visible_to_teacher=True,
+                        visible_to_coordinator=True,
                     )
                 )
 
@@ -207,6 +215,11 @@ class NoteDetailView(APIView):
                 note_decimal = Decimal(str(payload.get("note")))
             except (InvalidOperation, ValueError, TypeError):
                 return Response({"detail": "Invalid note value."}, status=status.HTTP_400_BAD_REQUEST)
+            if note_decimal < MIN_NOTE or note_decimal > MAX_NOTE:
+                return Response(
+                    {"detail": "Note must be between 1 and 20."},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
             note.note = note_decimal
             touched.append("note")
 
@@ -254,18 +267,20 @@ class NotePublishView(APIView):
         if role == "admin":
             queryset = Note.objects.filter(is_published=False)
         elif role == "coordonnateur":
-            filiere = (getattr(request.user, "filiere", "") or "").strip().lower()
-            if not filiere:
+            cycle = (getattr(request.user, "cycle", "") or "").strip().lower()
+            if not cycle:
                 return Response(
-                    {"detail": "Coordinator filiere is missing."},
+                    {"detail": "Coordinator cycle is missing."},
                     status=status.HTTP_400_BAD_REQUEST,
                 )
-            queryset = [
-                note
-                for note in Note.objects.filter(is_published=False).order_by("-created_at")[:1000]
-                if isinstance(note.filieres, list)
-                and any(str(item).strip().lower() == filiere for item in note.filieres)
-            ]
+            queryset = list(
+                Note.objects.filter(
+                    is_published=False,
+                    visible_to_coordinator=True,
+                    cycle__iexact=cycle,
+                )
+                .order_by("-created_at")[:1000]
+            )
         else:
             return Response({"detail": "Access denied."}, status=status.HTTP_403_FORBIDDEN)
 

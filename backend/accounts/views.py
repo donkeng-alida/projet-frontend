@@ -1,6 +1,7 @@
 from django.conf import settings
 from django.contrib.auth import authenticate
 from django.db.models import Q
+from django.utils.crypto import get_random_string
 from rest_framework import generics, status
 from rest_framework.authtoken.models import Token
 from rest_framework.pagination import PageNumberPagination
@@ -11,6 +12,17 @@ from rest_framework.views import APIView
 from .audit import log_audit_event
 from .models import User
 from .serializers import AuditEventSerializer, UserAdminUpdateSerializer, UserCreateSerializer, UserSerializer
+from rest_framework.decorators import api_view, permission_classes
+from rest_framework.permissions import IsAuthenticated
+from rest_framework.response import Response
+
+@api_view(['GET'])
+@permission_classes([IsAuthenticated])
+def coordinator_cycle(request):
+    user = request.user
+    # Adapte cette ligne selon ton modèle utilisateur
+    cycle = getattr(user, 'cycle', None)
+    return Response({'cycle': cycle})
 
 
 def parse_boolish(value):
@@ -19,6 +31,11 @@ def parse_boolish(value):
     if value is None:
         return False
     return str(value).strip().lower() in {"1", "true", "yes", "on"}
+
+
+def generate_user_password():
+    allowed_chars = "abcdefghjkmnpqrstuvwxyzABCDEFGHJKLMNPQRSTUVWXYZ23456789"
+    return get_random_string(12, allowed_chars=allowed_chars)
 
 
 def authenticate_with_identifier(request, identifier, password):
@@ -35,6 +52,10 @@ def authenticate_with_identifier(request, identifier, password):
 
 def has_admin_rights(user):
     return user.is_authenticated and (user.is_superuser or user.role == "admin")
+
+
+def has_teacher_rights(user):
+    return user.is_authenticated and (user.is_superuser or user.role in {"admin", "enseignant"})
 
 
 def is_restricted_superuser_identity(user):
@@ -195,7 +216,64 @@ class UserListCreateView(generics.ListCreateAPIView):
                 {"detail": "Only superuser can create the reserved superuser identity account."},
                 status=status.HTTP_403_FORBIDDEN,
             )
-        return super().create(request, *args, **kwargs)
+
+        payload = request.data.copy()
+        generated_password = generate_user_password()
+        payload["password"] = generated_password
+
+        serializer = self.get_serializer(data=payload)
+        serializer.is_valid(raise_exception=True)
+        self.perform_create(serializer)
+
+        headers = self.get_success_headers(serializer.data)
+        response_payload = dict(serializer.data)
+        response_payload["generated_password"] = generated_password
+
+        return Response(response_payload, status=status.HTTP_201_CREATED, headers=headers)
+
+
+class StudentListView(generics.ListAPIView):
+    serializer_class = UserSerializer
+    permission_classes = [IsAuthenticated]
+    pagination_class = UserListPagination
+
+    def get_queryset(self):
+        queryset = (
+            User.objects.filter(role=User.Roles.ETUDIANT, is_active=True, is_approved=True)
+            .order_by("-id")
+        )
+
+        q = (self.request.query_params.get("q") or "").strip()
+        cycle = (self.request.query_params.get("cycle") or "").strip()
+        filiere = (self.request.query_params.get("filiere") or "").strip()
+
+        if cycle:
+            queryset = queryset.filter(cycle__iexact=cycle)
+        if filiere:
+            queryset = queryset.filter(filiere__iexact=filiere)
+        if q:
+            queryset = queryset.filter(
+                Q(first_name__icontains=q)
+                | Q(last_name__icontains=q)
+                | Q(username__icontains=q)
+                | Q(email__icontains=q)
+            )
+
+        return queryset
+
+    def list(self, request, *args, **kwargs):
+        if not has_teacher_rights(request.user):
+            return Response(
+                {"detail": "Only teacher, admin or superuser can list students."},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+        cycle = (request.query_params.get("cycle") or "").strip()
+        if not cycle:
+            return Response(
+                {"detail": "cycle is required."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        return super().list(request, *args, **kwargs)
 
 
 class UserRetrieveUpdateDestroyView(generics.RetrieveUpdateDestroyAPIView):

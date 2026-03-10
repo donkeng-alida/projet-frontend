@@ -50,33 +50,7 @@ function ChoixProfil({ onRoleSelect, theme, onToggleTheme, langue, onLangueChang
     setSelectedRole(role);
     localStorage.setItem('role_selectionne', role);
     if (onRoleSelect) onRoleSelect(role);
-    if (role === 'admin') {
-      navigate('/admin');
-      return;
-    }
-    if (role === 'cellule-info') {
-      navigate('/cellule-info');
-      return;
-    }
-    if (role === 'superuser') {
-      navigate('/superuser');
-      return;
-    }
-    if (role === 'enseignant') {
-      navigate('/enseignant');
-      return;
-    }
-    if (role === 'coordonnateur') {
-      navigate('/coordonnateur');
-      return;
-    }
-    if (role === 'etudiant') {
-      navigate('/etudiant');
-      return;
-    }
-    if (role === 'parent') {
-      navigate('/parent');
-    }
+    navigate(`/login?role=${role}`); // ✅ Toujours passer par login
   };
 
   return (

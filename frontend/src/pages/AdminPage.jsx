@@ -1,4 +1,4 @@
-﻿import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { UserPlus, Users, ShieldCheck, ClipboardList, ArrowLeft, BookOpen, FileText, Moon, Sun, LogOut } from 'lucide-react';
 import { clearSession, readSession, saveSession } from '../utils/session';
@@ -13,7 +13,8 @@ function AdminPage({ theme, langue, onToggleTheme, onLangueChange }) {
   const [role, setRole] = useState('');
   const [cycle, setCycle] = useState('');
   const [childStudent, setChildStudent] = useState('');
-  const [password, setPassword] = useState('');
+  const [generatedStudentPassword, setGeneratedStudentPassword] = useState('');
+  const [generatedStudentLogin, setGeneratedStudentLogin] = useState('');
   const [status, setStatus] = useState({ type: '', message: '' });
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [users, setUsers] = useState([]);
@@ -60,15 +61,21 @@ function AdminPage({ theme, langue, onToggleTheme, onLangueChange }) {
       nomComplet: 'Nom complet',
       email: 'Adresse email',
       role: 'Role',
-      cycle: 'Cycle (coordonnateur)',
+      cycle: 'Cycle',
       enfantLie: 'Identifiant enfant (parent)',
       motDePasse: 'Mot de passe',
+      mdpAutoEtudiant: 'Mot de passe genere automatiquement par le serveur.',
+      mdpGenere: 'Mot de passe genere (a communiquer a l utilisateur)',
+      identifiantGenere: 'Identifiant (email)',
+      copier: 'Copier',
+      copieOk: 'Mot de passe copie.',
+      copieKo: 'Copie impossible.',
       utilisateurCree: 'Utilisateur cree avec succes.',
       erreurCreation: "Impossible de creer l'utilisateur.",
       nomManquant: 'Merci de saisir le nom complet.',
       emailManquant: 'Merci de saisir un email valide.',
       roleManquant: 'Merci de choisir un role.',
-      cycleManquant: 'Merci de renseigner le cycle du coordonnateur.',
+      cycleManquant: 'Merci de renseigner le cycle.',
       enfantManquant: "Merci de renseigner l'identifiant de l'enfant pour le parent.",
       mdpManquant: 'Merci de saisir un mot de passe.',
       admin: 'Admin',
@@ -140,15 +147,21 @@ function AdminPage({ theme, langue, onToggleTheme, onLangueChange }) {
       nomComplet: 'Full name',
       email: 'Email address',
       role: 'Role',
-      cycle: 'Cycle (coordinator)',
+      cycle: 'Cycle',
       enfantLie: 'Child identifier (parent)',
       motDePasse: 'Password',
+      mdpAutoEtudiant: 'Password is generated automatically by the server.',
+      mdpGenere: 'Generated password (share with the user)',
+      identifiantGenere: 'Login (email)',
+      copier: 'Copy',
+      copieOk: 'Password copied.',
+      copieKo: 'Copy failed.',
       utilisateurCree: 'User created successfully.',
       erreurCreation: 'Unable to create user.',
       nomManquant: 'Please enter the full name.',
       emailManquant: 'Please enter a valid email.',
       roleManquant: 'Please choose a role.',
-      cycleManquant: 'Please enter coordinator cycle.',
+      cycleManquant: 'Please enter the cycle.',
       enfantManquant: 'Please enter child identifier for parent.',
       mdpManquant: 'Please enter a password.',
       admin: 'Admin',
@@ -276,20 +289,63 @@ function AdminPage({ theme, langue, onToggleTheme, onLangueChange }) {
       const res = await fetch(`${apiBase}/api/accounts/users/`, {
         headers: { Authorization: `Token ${authToken}` },
       });
-      if (!res.ok) throw new Error('users_fetch_failed');
-      const data = await res.json();
+      const data = await res.json().catch(() => null);
+      if (!res.ok) throw new Error(data?.detail || 'users_fetch_failed');
       const list = Array.isArray(data)
         ? data
         : Array.isArray(data?.results)
         ? data.results
         : [];
       setUsers(list);
-    } catch {
+    } catch (err) {
       setUsers([]);
+      setStatus({
+        type: 'error',
+        message:
+          (langue === 'fr' ? 'Impossible de charger les comptes.' : 'Failed to load accounts.') +
+          (err?.message ? ` (${err.message})` : ''),
+      });
     } finally {
       setIsLoadingUsers(false);
     }
-  }, [apiBase, authToken]);
+  }, [apiBase, authToken, langue]);
+
+  const updateUserStatus = async (userId, isActive) => {
+    if (!authToken) return;
+    try {
+      const res = await fetch(`${apiBase}/api/accounts/users/${userId}/`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json', Authorization: `Token ${authToken}` },
+        body: JSON.stringify({ is_active: Boolean(isActive) }),
+      });
+      const data = await res.json().catch(() => null);
+      if (!res.ok) throw new Error(data?.detail || 'user_update_failed');
+      await fetchUsers();
+    } catch (err) {
+      setStatus({
+        type: 'error',
+        message: err?.message || (langue === 'fr' ? 'Modification refusée.' : 'Update denied.'),
+      });
+    }
+  };
+
+  const deleteUser = async (userId) => {
+    if (!authToken) return;
+    try {
+      const res = await fetch(`${apiBase}/api/accounts/users/${userId}/`, {
+        method: 'DELETE',
+        headers: { Authorization: `Token ${authToken}` },
+      });
+      const data = await res.json().catch(() => null);
+      if (!res.ok) throw new Error(data?.detail || 'user_delete_failed');
+      await fetchUsers();
+    } catch (err) {
+      setStatus({
+        type: 'error',
+        message: err?.message || (langue === 'fr' ? 'Suppression refusée.' : 'Delete denied.'),
+      });
+    }
+  };
 
   const fetchNotes = useCallback(async (page = 1, pageSize = notesPageSize) => {
     if (!authToken) return;
@@ -450,9 +506,8 @@ function AdminPage({ theme, langue, onToggleTheme, onLangueChange }) {
     if (!fullName.trim()) { setStatus({ type: 'error', message: t.nomManquant }); return; }
     if (!email.includes('@')) { setStatus({ type: 'error', message: t.emailManquant }); return; }
     if (!role) { setStatus({ type: 'error', message: t.roleManquant }); return; }
-    if (role === 'coordonnateur' && !cycle.trim()) { setStatus({ type: 'error', message: t.cycleManquant }); return; }
+    if ((role === 'coordonnateur' || role === 'etudiant') && !cycle.trim()) { setStatus({ type: 'error', message: t.cycleManquant }); return; }
     if (role === 'parent' && !childStudent.trim()) { setStatus({ type: 'error', message: t.enfantManquant }); return; }
-    if (!password.trim()) { setStatus({ type: 'error', message: t.mdpManquant }); return; }
     if (!authToken) { setStatus({ type: 'error', message: t.accesRefuse }); return; }
 
     const parts = fullName.trim().split(/\s+/);
@@ -462,16 +517,19 @@ function AdminPage({ theme, langue, onToggleTheme, onLangueChange }) {
 
     setIsSubmitting(true);
     setStatus({ type: '', message: '' });
+    setGeneratedStudentPassword('');
+    setGeneratedStudentLogin('');
     try {
+      const payload = {
+        username, first_name, last_name, email, role,
+        cycle: role === 'coordonnateur' || role === 'etudiant' ? cycle.trim() : '',
+        child_student: role === 'parent' ? childStudent.trim() : '',
+      };
+
       const res = await fetch(`${apiBase}/api/accounts/users/`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', Authorization: `Token ${authToken}` },
-        body: JSON.stringify({
-          username, first_name, last_name, email, role,
-          cycle: role === 'coordonnateur' ? cycle.trim() : '',
-          child_student: role === 'parent' ? childStudent.trim() : '',
-          password,
-        }),
+        body: JSON.stringify(payload),
       });
 
       let createdUser = null;
@@ -493,12 +551,26 @@ function AdminPage({ theme, langue, onToggleTheme, onLangueChange }) {
       }
 
       setStatus({ type: 'success', message: t.utilisateurCree });
-      setFullName(''); setEmail(''); setRole(''); setCycle(''); setChildStudent(''); setPassword('');
+      if (createdUser?.generated_password) {
+        setGeneratedStudentPassword(String(createdUser.generated_password));
+        setGeneratedStudentLogin(String(createdUser?.username || createdUser?.email || username));
+      }
+      setFullName(''); setEmail(''); setRole(''); setCycle(''); setChildStudent('');
       await fetchUsers();
     } catch (err) {
       setStatus({ type: 'error', message: err?.message || t.erreurCreation });
     } finally {
       setIsSubmitting(false);
+    }
+  };
+
+  const copyGeneratedStudentPassword = async () => {
+    if (!generatedStudentPassword) return;
+    try {
+      await navigator.clipboard.writeText(generatedStudentPassword);
+      setStatus({ type: 'success', message: t.copieOk });
+    } catch {
+      setStatus({ type: 'error', message: t.copieKo });
     }
   };
 
@@ -534,6 +606,10 @@ function AdminPage({ theme, langue, onToggleTheme, onLangueChange }) {
 
   const handleLogout = () => {
     clearSession();
+    localStorage.removeItem('token');
+    localStorage.removeItem('role');
+    localStorage.removeItem('username');
+    localStorage.removeItem('full_name');
     setAuthToken(''); setAuthRole(''); setAuthScope('');
     setAuthUser('');
     setLoginId(''); setLoginPassword('');
@@ -560,7 +636,7 @@ function AdminPage({ theme, langue, onToggleTheme, onLangueChange }) {
           ...prev,
           [noteId]:
             langue === 'fr'
-              ? 'Veuillez sÃ©lectionner au moins une cible de transfert.'
+              ? 'Veuillez sélectionner au moins une cible de transfert.'
               : 'Please select at least one transfer target.',
         }));
         return;
@@ -582,7 +658,7 @@ function AdminPage({ theme, langue, onToggleTheme, onLangueChange }) {
       const hasTransferTarget = Boolean(share.student || share.coordinator || share.teacher);
       if (hasTransferTarget) {
         const labels = [];
-        if (share.student) labels.push(langue === 'fr' ? 'Ã©tudiant' : 'student');
+        if (share.student) labels.push(langue === 'fr' ? 'étudiant' : 'student');
         if (share.coordinator) labels.push(langue === 'fr' ? 'coordonnateur' : 'coordinator');
         if (share.teacher) labels.push(langue === 'fr' ? 'enseignant' : 'teacher');
         const listText =
@@ -596,7 +672,7 @@ function AdminPage({ theme, langue, onToggleTheme, onLangueChange }) {
           ...prev,
           [noteId]:
             langue === 'fr'
-              ? `Note transfÃ©rÃ©e Ã  ${listText}.`
+              ? `Note transferee a ${listText}.`
               : `Mark transferred to ${listText}.`,
         }));
       } else {
@@ -687,14 +763,14 @@ function AdminPage({ theme, langue, onToggleTheme, onLangueChange }) {
     }
   };
 
-  // â”€â”€ classes rÃ©utilisables â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  // -- classes reutilisables ------------------------------------------
   const page = isDark
     ? 'min-h-screen bg-gradient-to-br from-slate-950 via-slate-900 to-slate-950 text-slate-100'
-    : 'min-h-screen bg-gradient-to-br from-slate-100 via-white to-sky-50 text-slate-900'
+    : 'min-h-screen bg-[#f4ddd0] text-slate-900'
 
   const card = isDark
     ? 'rounded-3xl border border-slate-800/70 bg-slate-900/80 p-6 shadow-xl backdrop-blur-sm'
-    : 'rounded-3xl border border-white/80 bg-white/95 p-6 shadow-lg backdrop-blur-sm'
+    : 'rounded-3xl border border-[#c9dee0] bg-[#e8f1f2] p-6 shadow-[0_16px_40px_rgba(45,95,102,0.15)]'
 
   const input = isDark
     ? 'w-full rounded-xl border border-slate-700 bg-slate-800/80 px-4 py-2.5 text-sm text-slate-100 placeholder-slate-500 outline-none transition focus:border-sky-400 focus:ring-2 focus:ring-sky-400/20'
@@ -706,12 +782,11 @@ function AdminPage({ theme, langue, onToggleTheme, onLangueChange }) {
 
   const rowCard = isDark
     ? 'grid gap-2 rounded-2xl border border-slate-700/60 bg-slate-900/80 px-3 py-3 transition hover:border-slate-600'
-    : 'grid gap-2 rounded-2xl border border-slate-100 bg-white px-3 py-3 shadow-sm transition hover:border-sky-100 hover:shadow-md'
+    : 'grid gap-2 rounded-2xl border border-[#d9e7e8] bg-white/90 px-3 py-3 shadow-sm transition hover:border-[#9bc3c8] hover:shadow-md'
 
   const sectionTitle = 'mb-4 inline-flex items-center gap-2 text-lg font-bold tracking-tight'
-  const textMuted = isDark ? 'text-slate-300' : 'text-slate-600'
-  const surfaceMuted = isDark ? 'border-slate-700/60 bg-slate-900/40 text-slate-200' : 'border-slate-200 bg-white text-slate-700'
-  const navbarTone = isDark ? 'border-slate-700/70 bg-slate-900/70 text-slate-100' : 'border-slate-200 bg-white/90 text-slate-700'
+  const textMuted = isDark ? 'text-slate-300' : 'text-teal-900/70'
+  const surfaceMuted = isDark ? 'border-slate-700/60 bg-slate-900/40 text-slate-200' : 'border-[#d3e5e7] bg-[#f4f9f9] text-teal-900'
   const sectionHint = `text-sm ${textMuted}`
   const fieldWrap = 'space-y-1'
   const statusBox = (type) =>
@@ -720,7 +795,7 @@ function AdminPage({ theme, langue, onToggleTheme, onLangueChange }) {
     }`
   const glassPanel = isDark
     ? 'rounded-2xl border border-slate-700/60 bg-slate-800/60'
-    : 'rounded-2xl border border-slate-100 bg-slate-50'
+    : 'rounded-2xl border border-[#d3e5e7] bg-[#f5fbfb]'
 
   const btnPrimary = 'rounded-xl bg-gradient-to-r from-sky-700 to-sky-600 px-5 py-2.5 text-sm font-bold text-white shadow-md transition hover:from-sky-600 hover:to-sky-500 hover:shadow-sky-400/20 disabled:cursor-not-allowed disabled:opacity-60'
 
@@ -742,13 +817,30 @@ function AdminPage({ theme, langue, onToggleTheme, onLangueChange }) {
   const tabBtn = (isActive) =>
     `rounded-xl px-4 py-2 text-sm font-semibold transition ${
       isActive
-        ? 'bg-sky-700 text-white shadow'
+        ? 'bg-teal-700 text-white shadow'
         : isDark
           ? 'border border-slate-600 text-slate-200 hover:border-sky-400 hover:text-sky-200'
-          : 'border border-slate-300 text-slate-700 hover:border-sky-500 hover:text-sky-700'
+          : 'border border-[#bfd9dc] text-teal-900 hover:border-teal-600 hover:text-teal-700'
     }`
+  const shell = isDark
+    ? 'overflow-hidden rounded-[2rem] border border-slate-700 bg-slate-900/70 shadow-2xl'
+    : 'overflow-hidden rounded-[2rem] border border-[#e9d5c8] bg-[#f9f6f3] shadow-[0_20px_60px_rgba(109,88,74,0.18)]'
+  const rail = isDark
+    ? 'flex flex-row md:flex-col items-center gap-2 border-b border-slate-700 bg-slate-900/90 p-3 md:min-h-[calc(100vh-5rem)] md:w-24 md:border-b-0 md:border-r'
+    : 'flex flex-row md:flex-col items-center gap-2 border-b border-[#d2e5e6] bg-[#d7e6e8] p-3 md:min-h-[calc(100vh-5rem)] md:w-24 md:border-b-0 md:border-r'
+  const railBtn = (active) =>
+    `inline-flex h-10 w-10 items-center justify-center rounded-xl transition ${
+      active
+        ? 'bg-teal-700 text-white shadow'
+        : isDark
+          ? 'text-slate-300 hover:bg-slate-700 hover:text-white'
+          : 'text-teal-800 hover:bg-white/80'
+    }`
+  const heroBadge = isDark
+    ? 'rounded-full border border-slate-600 bg-slate-800 px-3 py-1 text-xs font-semibold text-slate-300'
+    : 'rounded-full border border-[#bcd8db] bg-[#edf6f7] px-3 py-1 text-xs font-semibold text-teal-800'
 
-  // â”€â”€ page login â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  // -- page login ----------------------------------------------------
   if (!isAdmin) {
     return (
       <div className={`${page} flex items-center justify-center px-4 py-10`}>
@@ -777,11 +869,11 @@ function AdminPage({ theme, langue, onToggleTheme, onLangueChange }) {
             <div className="mx-auto mb-4 flex h-14 w-14 items-center justify-center rounded-2xl bg-sky-700 text-white shadow-lg shadow-sky-900/30">
               <ShieldCheck size={26} />
             </div>
-            <p className="text-xs font-bold uppercase tracking-widest text-sky-600 mb-1">Ã‰cole JFN-HUI</p>
+            <p className="text-xs font-bold uppercase tracking-widest text-sky-600 mb-1">École JFN-HUI</p>
             <h1 className={`text-2xl font-extrabold tracking-tight ${textMuted}`}>{t.connexionTitre}</h1>
             <p className={`mt-2 text-sm ${textMuted}`}>
               {langue === 'fr'
-                ? 'AccÃ¨s rÃ©servÃ© aux administrateurs. Vos actions sont journalisÃ©es.'
+                ? 'Accès réservé aux administrateurs. Vos actions sont journalisées.'
                 : 'Admin-only access. Your actions are logged.'}
             </p>
 
@@ -811,7 +903,7 @@ function AdminPage({ theme, langue, onToggleTheme, onLangueChange }) {
 
             <Link to="/choix-profil"
               className={`mt-3 flex w-full items-center justify-center gap-2 rounded-xl border-2 px-6 py-2.5 text-sm font-semibold transition ${isDark ? 'border-slate-600 text-slate-200 hover:border-sky-400 hover:text-sky-200' : 'border-slate-300 text-slate-700 hover:border-sky-600 hover:text-sky-700'}`}>
-              â† {t.retour}
+              ← {t.retour}
             </Link>
           </section>
         </div>
@@ -819,57 +911,59 @@ function AdminPage({ theme, langue, onToggleTheme, onLangueChange }) {
     );
   }
 
-  // â”€â”€ dashboard admin â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  // -- dashboard admin -----------------------------------------------
   return (
-    <div className={`${page} px-4 py-8`}>
-      <div className="mx-auto w-full max-w-7xl">
-
-        {/* navbar */}
-        <div className={`mb-6 flex flex-wrap items-center justify-between gap-3 rounded-2xl border px-4 py-3 backdrop-blur-sm md:px-5 md:py-4 ${navbarTone}`}>
-          <div className="flex items-center gap-2">
-            <Link to="/choix-profil" className={btnOutline}>
-              <ArrowLeft size={15} /> {t.retourRoles}
-            </Link>
-            <Link to="/" className="inline-flex items-center gap-2 rounded-xl bg-sky-700 px-4 py-2 text-sm font-semibold text-white shadow transition hover:bg-sky-600">
-              {t.accueil}
-            </Link>
-          </div>
-          <div className="flex items-center gap-2">
-            <button className="rounded-xl bg-sky-700 px-3 py-1.5 text-xs font-bold text-white transition hover:bg-sky-600"
-              type="button" onClick={onToggleTheme}>
-              {isDark ? <Sun size={16} /> : <Moon size={16} />}
-            </button>
-            {['fr', 'en'].map(l => (
-              <button key={l}
-                className={`rounded-xl px-3 py-1.5 text-xs font-bold transition ${langue === l ? 'bg-sky-700 text-white shadow' : isDark ? 'border border-slate-600 text-slate-300 hover:border-sky-400 hover:text-sky-200' : 'border border-sky-500 text-sky-700 hover:bg-sky-50'}`}
-                type="button" onClick={() => onLangueChange(l)}>
-                {l.toUpperCase()}
-              </button>
-            ))}
-            <button
-              className={`inline-flex items-center gap-1 rounded-xl border px-3 py-1.5 text-xs font-bold transition ${isDark ? 'border-slate-600 text-slate-200 hover:border-sky-400 hover:text-sky-200' : 'border-slate-300 text-slate-700 hover:border-sky-600 hover:text-sky-700'}`}
-              type="button" onClick={handleLogout}>
-              <LogOut size={14} /> {t.deconnexion}
-            </button>
-          </div>
-        </div>
-
-        {/* header */}
-        <header className={`${card} mb-6`}>
-          <div className="flex items-center gap-4">
-            <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-sky-700 text-white shadow-lg shadow-sky-900/20">
-              <ShieldCheck size={22} />
+    <div className={`${page} px-3 py-4 md:px-6 md:py-8`}>
+      <div className={`mx-auto w-full max-w-[1280px] ${shell}`}>
+        <div className="flex flex-col md:flex-row">
+          <aside className={rail}>
+            <div className="mb-2 flex h-10 w-10 items-center justify-center rounded-full bg-teal-700 text-sm font-extrabold text-white">
+              J
             </div>
-            <div>
-              <p className="text-xs font-bold uppercase tracking-widest text-sky-600">Ã‰cole JFN-HUI</p>
-              <h1 className="text-2xl font-extrabold tracking-tight text-sky-700 md:text-3xl">{t.titre}</h1>
-              <p className={`mt-0.5 text-sm ${textMuted}`}>{t.sousTitre}</p>
-              <p className={`mt-1 text-sm font-medium ${textMuted}`}>{t.bonjour}, {authUser || 'admin'}.</p>
-              <p className={`mt-1 text-xs ${textMuted}`}>{t.bienvenueAide}</p>
-              <p className={`mt-0.5 text-xs ${textMuted}`}>{t.accessibiliteInfo}</p>
-            </div>
-          </div>
-        </header>
+            <button type="button" className={railBtn(activeView === 'accounts')} onClick={() => goToAdminView('accounts', 'all')} title={langue === 'fr' ? 'Comptes' : 'Accounts'}>
+              <Users size={18} />
+            </button>
+            <button type="button" className={railBtn(activeView === 'notes')} onClick={() => goToAdminView('notes')} title={langue === 'fr' ? 'Notes' : 'Marks'}>
+              <BookOpen size={18} />
+            </button>
+            <button type="button" className={railBtn(activeView === 'requests')} onClick={() => goToAdminView('requests')} title={langue === 'fr' ? 'Requêtes' : 'Requests'}>
+              <FileText size={18} />
+            </button>
+            <div className="hidden flex-1 md:block" />
+            <button className={railBtn(false)} type="button" onClick={onToggleTheme} aria-label="Toggle theme">
+              {isDark ? <Sun size={18} /> : <Moon size={18} />}
+            </button>
+          </aside>
+
+          <main className="flex-1 p-3 md:p-6">
+            <header className={`${card} mb-5`}>
+              <div className="flex flex-wrap items-start justify-between gap-4">
+                <div>
+                  <p className="text-xs font-bold uppercase tracking-widest text-teal-700">École JFN-HUI</p>
+                  <h1 className="mt-1 text-2xl font-extrabold tracking-tight text-teal-900 md:text-3xl">{t.titre}</h1>
+                  <p className={`mt-1 text-sm ${textMuted}`}>{t.sousTitre}</p>
+                  <p className={`mt-1 text-sm font-medium ${textMuted}`}>{t.bonjour}, {authUser || 'admin'}.</p>
+                </div>
+                <div className="flex flex-wrap items-center gap-2">
+                  <span className={heroBadge}>{langue === 'fr' ? 'Espace sécurisé' : 'Secure workspace'}</span>
+                  <Link to="/choix-profil" className={btnOutline}><ArrowLeft size={14} /> {t.retourRoles}</Link>
+                  <Link to="/" className="inline-flex items-center gap-2 rounded-xl bg-teal-700 px-4 py-2 text-sm font-semibold text-white shadow transition hover:bg-teal-600">{t.accueil}</Link>
+                  {['fr', 'en'].map(l => (
+                    <button key={l}
+                      className={`rounded-xl px-3 py-1.5 text-xs font-bold transition ${langue === l ? 'bg-teal-700 text-white shadow' : isDark ? 'border border-slate-600 text-slate-300 hover:border-teal-400 hover:text-teal-200' : 'border border-[#b9d5d7] text-teal-900 hover:bg-[#edf7f8]'}`}
+                      type="button" onClick={() => onLangueChange(l)}>
+                      {l.toUpperCase()}
+                    </button>
+                  ))}
+                  <button
+                    className={`inline-flex items-center gap-1 rounded-xl border px-3 py-1.5 text-xs font-bold transition ${isDark ? 'border-slate-600 text-slate-200 hover:border-teal-400 hover:text-teal-200' : 'border-[#b9d5d7] text-teal-900 hover:bg-[#edf7f8]'}`}
+                    type="button" onClick={handleLogout}>
+                    <LogOut size={14} /> {t.deconnexion}
+                  </button>
+                </div>
+              </div>
+              <p className={`mt-3 text-xs ${textMuted}`}>{t.bienvenueAide} {t.accessibiliteInfo}</p>
+            </header>
 
         <section className="mb-6 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
           {quickStats.map((item) => (
@@ -971,7 +1065,7 @@ function AdminPage({ theme, langue, onToggleTheme, onLangueChange }) {
           </div>
         </section>
 
-        {/* crÃ©ation + stats */}
+        {/* création + stats */}
         {activeView === 'accounts' && (
         <section className="mt-0 grid gap-6 xl:grid-cols-3">
 
@@ -981,7 +1075,7 @@ function AdminPage({ theme, langue, onToggleTheme, onLangueChange }) {
             </h2>
             <p className={sectionHint}>
               {langue === 'fr'
-                ? 'CrÃ©ez un compte en moins dâ€™une minute. Les champs affichÃ©s sâ€™ajustent selon le rÃ´le.'
+                ? 'Créez un compte en moins d’une minute. Les champs affichés s’ajustent selon le rôle.'
                 : 'Create an account in under a minute. Fields adapt to the selected role.'}
             </p>
             <div className="mt-4 grid gap-3 md:grid-cols-2">
@@ -1008,7 +1102,7 @@ function AdminPage({ theme, langue, onToggleTheme, onLangueChange }) {
                   <option value="etudiant">{t.etudiant}</option>
                 </select>
               </div>
-              {role === 'coordonnateur' && (
+              {(role === 'coordonnateur' || role === 'etudiant') && (
                 <div className={`${fieldWrap} md:col-span-2`}>
                   <label className={fieldLabel}>{t.cycle}</label>
                   <input className={input} placeholder={t.cycle} value={cycle}
@@ -1024,9 +1118,7 @@ function AdminPage({ theme, langue, onToggleTheme, onLangueChange }) {
               )}
               <div className={`${fieldWrap} md:col-span-2`}>
                 <label className={fieldLabel}>{t.motDePasse}</label>
-                <input className={input} placeholder={t.motDePasse} type="password" value={password}
-                  autoComplete="new-password"
-                  onChange={(event) => setPassword(event.target.value)} />
+                <p className={sectionHint}>{t.mdpAutoEtudiant}</p>
               </div>
             </div>
             <button className={`mt-4 ${btnPrimary}`} type="button" onClick={handleCreateUser} disabled={isSubmitting}>
@@ -1036,6 +1128,24 @@ function AdminPage({ theme, langue, onToggleTheme, onLangueChange }) {
               <p className={statusBox(status.type)} role="status" aria-live="polite">
                 {status.message}
               </p>
+            )}
+            {generatedStudentPassword && (
+              <div className={`mt-4 ${glassPanel} px-4 py-4`}>
+                <p className={`text-sm font-semibold ${textMuted}`}>{t.mdpGenere}</p>
+                {generatedStudentLogin && (
+                  <p className={`mt-1 text-xs ${textMuted}`}>
+                    {t.identifiantGenere}: <span className="font-mono">{generatedStudentLogin}</span>
+                  </p>
+                )}
+                <div className="mt-3 flex flex-col gap-2 sm:flex-row sm:items-center">
+                  <div className={`flex-1 rounded-xl border px-3 py-2 font-mono text-sm ${surfaceMuted}`}>
+                    {generatedStudentPassword}
+                  </div>
+                  <button type="button" className={btnOutline} onClick={copyGeneratedStudentPassword}>
+                    {t.copier}
+                  </button>
+                </div>
+              </div>
             )}
           </article>
 
@@ -1055,7 +1165,7 @@ function AdminPage({ theme, langue, onToggleTheme, onLangueChange }) {
                 <p className={fieldLabel}>{t.rolesDefinis}</p>
                 <p className="mt-1 text-3xl font-extrabold text-sky-700">{definedRoles}</p>
                 <p className={sectionHint}>
-                  {langue === 'fr' ? 'DiversitÃ© des rÃ´les enregistrÃ©s.' : 'Variety of roles registered.'}
+                  {langue === 'fr' ? 'Diversité des rôles enregistrés.' : 'Variety of roles registered.'}
                 </p>
               </div>
             </div>
@@ -1063,7 +1173,7 @@ function AdminPage({ theme, langue, onToggleTheme, onLangueChange }) {
         </section>
         )}
 
-        {/* actions rÃ©centes */}
+        {/* actions récentes */}
         {activeView === 'accounts' && (
         <section className={`mt-6 ${card}`}>
           <h2 className={sectionTitle}>
@@ -1084,7 +1194,7 @@ function AdminPage({ theme, langue, onToggleTheme, onLangueChange }) {
             )}
           </div>
           <div className={`mt-3 inline-flex items-center gap-2 text-xs ${textMuted}`}>
-            <Users size={13} /> JFN-HUI Â· Admin Panel
+            <Users size={13} /> JFN-HUI · Admin Panel
           </div>
         </section>
         )}
@@ -1117,7 +1227,7 @@ function AdminPage({ theme, langue, onToggleTheme, onLangueChange }) {
                   const full = [user?.first_name, user?.last_name].filter(Boolean).join(' ').trim();
                   const name = full || user?.full_name || user?.username || user?.email || '-';
                   return (
-                    <article key={user?.id || `${user?.username}-${user?.email}`} className={`${rowCard} md:grid-cols-4`}>
+                    <article key={user?.id || `${user?.username}-${user?.email}`} className={`${rowCard} md:grid-cols-5`}>
                       <div>
                         <p className={fieldLabel}>{langue === 'fr' ? 'Nom' : 'Name'}</p>
                         <p className="mt-0.5 font-semibold">{name}</p>
@@ -1142,6 +1252,37 @@ function AdminPage({ theme, langue, onToggleTheme, onLangueChange }) {
                             : (langue === 'fr' ? 'Actif' : 'Active')}
                         </span>
                       </div>
+                      <div className="flex flex-wrap items-end gap-2">
+                        <button
+                          type="button"
+                          onClick={() => updateUserStatus(user.id, user?.is_active === false)}
+                          className={`rounded-lg px-3 py-2 text-xs font-bold ${
+                            user?.is_active === false
+                              ? 'bg-emerald-600 text-white hover:bg-emerald-500'
+                              : 'bg-amber-600 text-white hover:bg-amber-500'
+                          }`}
+                          disabled={!user?.id}
+                          title={langue === 'fr' ? 'Activer / désactiver' : 'Enable / disable'}
+                        >
+                          {user?.is_active === false ? (langue === 'fr' ? 'Activer' : 'Enable') : (langue === 'fr' ? 'Désactiver' : 'Disable')}
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            const ok = window.confirm(
+                              langue === 'fr'
+                                ? `Supprimer définitivement le compte: ${name} ?`
+                                : `Permanently delete account: ${name}?`
+                            );
+                            if (ok) deleteUser(user.id);
+                          }}
+                          className="rounded-lg bg-rose-700 px-3 py-2 text-xs font-bold text-white hover:bg-rose-600"
+                          disabled={!user?.id}
+                          title={langue === 'fr' ? 'Supprimer' : 'Delete'}
+                        >
+                          {langue === 'fr' ? 'Supprimer' : 'Delete'}
+                        </button>
+                      </div>
                     </article>
                   );
                 })}
@@ -1151,7 +1292,7 @@ function AdminPage({ theme, langue, onToggleTheme, onLangueChange }) {
         </section>
         )}
 
-        {/* notes reÃ§ues */}
+        {/* notes reçues */}
         {activeView === 'notes' && (
         <section className={`mt-6 ${card}`}>
           <h2 className={sectionTitle}>
@@ -1296,7 +1437,7 @@ function AdminPage({ theme, langue, onToggleTheme, onLangueChange }) {
               <button type="button" onClick={() => notesPrev && fetchNotes(notesPage - 1, notesPageSize)}
                 disabled={!notesPrev || isLoadingNotes}
                 className={paginBtnPrev(!!notesPrev && !isLoadingNotes)}>
-                â† {t.precedent}
+                ← {t.precedent}
               </button>
               <span className={`rounded-lg px-3 py-2 text-sm font-semibold ${textMuted}`}>
                 {t.page} {notesPage}
@@ -1304,14 +1445,14 @@ function AdminPage({ theme, langue, onToggleTheme, onLangueChange }) {
               <button type="button" onClick={() => notesNext && fetchNotes(notesPage + 1, notesPageSize)}
                 disabled={!notesNext || isLoadingNotes}
                 className={paginBtn(!!notesNext && !isLoadingNotes)}>
-                {t.suivant} â†’
+                {t.suivant} →
               </button>
             </div>
           </div>
         </section>
         )}
 
-        {/* requÃªtes Ã©tudiantes */}
+        {/* requêtes étudiantes */}
         {activeView === 'requests' && (
         <section className={`mt-6 ${card}`}>
           <h2 className={sectionTitle}>
@@ -1362,14 +1503,14 @@ function AdminPage({ theme, langue, onToggleTheme, onLangueChange }) {
                             onClick={() => openPdf(item.pdfUrl)}
                             className="text-left text-xs font-semibold text-sky-700 underline underline-offset-2 hover:text-sky-500"
                           >
-                            ðŸ“„ {t.ouvrirPdf}
+                            📄 {t.ouvrirPdf}
                           </button>
                           <a
                             href={item.pdfUrl}
                             download
                             className="text-xs font-semibold text-sky-700 underline underline-offset-2 hover:text-sky-500"
                           >
-                            â¬‡ï¸ {t.telechargerPdf}
+                            ⬇️ {t.telechargerPdf}
                           </a>
                         </div>
                       ) : (
@@ -1386,7 +1527,7 @@ function AdminPage({ theme, langue, onToggleTheme, onLangueChange }) {
             )}
           </div>
 
-          {/* pagination requÃªtes */}
+          {/* pagination requêtes */}
           <div className="mt-4 flex flex-wrap items-center justify-between gap-3">
             <span className={`text-sm ${textMuted}`}>
               {requestsCount > 0 ? `${requestsCount} requetes` : ''}
@@ -1403,7 +1544,7 @@ function AdminPage({ theme, langue, onToggleTheme, onLangueChange }) {
               <button type="button" onClick={() => requestsPrev && fetchRequests(requestsPage - 1, requestsPageSize)}
                 disabled={!requestsPrev || isLoadingRequests}
                 className={paginBtnPrev(!!requestsPrev && !isLoadingRequests)}>
-                â† {t.precedent}
+                ← {t.precedent}
               </button>
               <span className={`rounded-lg px-3 py-2 text-sm font-semibold ${textMuted}`}>
                 {t.page} {requestsPage}
@@ -1411,13 +1552,15 @@ function AdminPage({ theme, langue, onToggleTheme, onLangueChange }) {
               <button type="button" onClick={() => requestsNext && fetchRequests(requestsPage + 1, requestsPageSize)}
                 disabled={!requestsNext || isLoadingRequests}
                 className={paginBtn(!!requestsNext && !isLoadingRequests)}>
-                {t.suivant} â†’
+                {t.suivant} →
               </button>
             </div>
           </div>
         </section>
         )}
 
+          </main>
+        </div>
       </div>
     </div>
   );

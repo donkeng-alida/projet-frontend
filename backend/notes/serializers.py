@@ -16,6 +16,7 @@ class NoteSerializer(serializers.ModelSerializer):
             "filieres",
             "matiere",
             "etudiant",
+            "note_type",
             "note",
             "teacher_can_edit",
             "visible_to_teacher",

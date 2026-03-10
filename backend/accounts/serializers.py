@@ -69,6 +69,18 @@ class UserCreateSerializer(serializers.ModelSerializer):
         fields = ["id", "username", "first_name", "last_name", "email", "role", "cycle", "filiere", "child_student", "password"]
         read_only_fields = ["id"]
 
+    def validate(self, attrs):
+        role = attrs.get("role", User.Roles.ETUDIANT)
+        cycle = (attrs.get("cycle") or "").strip()
+        child_student = (attrs.get("child_student") or "").strip()
+
+        if role in {User.Roles.COORDONNATEUR, User.Roles.ETUDIANT} and not cycle:
+            raise serializers.ValidationError({"cycle": "Cycle is required for this role."})
+        if role == User.Roles.PARENT and not child_student:
+            raise serializers.ValidationError({"child_student": "child_student is required for parent accounts."})
+
+        return attrs
+
     def create(self, validated_data):
         password = validated_data.pop("password")
         target_role = validated_data.get("role", User.Roles.ETUDIANT)
@@ -85,6 +97,18 @@ class UserAdminUpdateSerializer(serializers.ModelSerializer):
     class Meta:
         model = User
         fields = ["email", "is_active", "is_approved", "role", "cycle", "filiere", "child_student", "password"]
+
+    def validate(self, attrs):
+        role = attrs.get("role", getattr(self.instance, "role", User.Roles.ETUDIANT))
+        cycle = (attrs.get("cycle", getattr(self.instance, "cycle", "")) or "").strip()
+        child_student = (attrs.get("child_student", getattr(self.instance, "child_student", "")) or "").strip()
+
+        if role in {User.Roles.COORDONNATEUR, User.Roles.ETUDIANT} and not cycle:
+            raise serializers.ValidationError({"cycle": "Cycle is required for this role."})
+        if role == User.Roles.PARENT and not child_student:
+            raise serializers.ValidationError({"child_student": "child_student is required for parent accounts."})
+
+        return attrs
 
     def update(self, instance, validated_data):
         password = validated_data.pop("password", None)

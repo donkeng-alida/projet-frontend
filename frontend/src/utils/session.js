@@ -1,6 +1,6 @@
-const KEY_TOKEN = 'auth_token';
-const KEY_ROLE = 'auth_role';
-const KEY_USER = 'auth_user';
+const KEY_TOKEN = 'token';
+const KEY_ROLE = 'role';
+const KEY_USER = 'username';
 const KEY_SCOPE = 'auth_scope';
 
 export function readSession() {

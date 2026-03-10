@@ -10,6 +10,7 @@ class Note(models.Model):
     filieres = models.JSONField(default=list, blank=True)
     matiere = models.CharField(max_length=120)
     etudiant = models.CharField(max_length=120)
+    note_type = models.CharField(max_length=2, blank=True, default="")
     note = models.DecimalField(max_digits=5, decimal_places=2, null=True, blank=True)
     teacher_can_edit = models.BooleanField(default=False)
     visible_to_teacher = models.BooleanField(default=False)

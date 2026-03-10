@@ -9,6 +9,7 @@ import CoordinatorPage from './pages/CoordinatorPage';
 import StudentPage from './pages/StudentPage';
 import ParentPage from './pages/ParentPage';
 import CelluleInfoPage from './pages/CelluleInfoPage';
+import LoginPage from './pages/LoginPage';
 
 function AccueilPage({ isDark, theme, langue, setLangue, toggleTheme, t, profil }) {
   const navigate = useNavigate();
@@ -385,10 +386,6 @@ function HelpPage({ isDark, theme, langue, setLangue, toggleTheme, t }) {
       `${item.q} ${item.a}`.toLowerCase().includes(query)
     );
   }, [faqQuery, t.help.faq]);
-
-  useEffect(() => {
-    setChatMessages([{ from: 'bot', text: t.help.assistantBienvenue }]);
-  }, [langue, t.help.assistantBienvenue]);
 
   const getAssistantResponse = (message) => {
     const value = message.toLowerCase();
@@ -1015,6 +1012,16 @@ function App() {
   return (
     <Routes>
       <Route
+        path="/login"
+        element={
+          <LoginPage
+            theme={theme}
+            onToggleTheme={toggleTheme}
+            langue={langue}
+          />
+        }
+      />
+      <Route
         path="/"
         element={
           <AccueilPage
@@ -1057,6 +1064,7 @@ function App() {
         path="/aide"
         element={
           <HelpPage
+            key={langue}
             isDark={isDark}
             theme={theme}
             langue={langue}
@@ -1211,4 +1219,3 @@ function App() {
 }
 
 export default App;
-

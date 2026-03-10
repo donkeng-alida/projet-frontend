@@ -22,13 +22,13 @@ class StudentRequestView(APIView):
         if role == "admin":
             queryset = StudentRequest.objects.all()
         elif role == "coordonnateur":
-            filiere = (getattr(request.user, "filiere", "") or "").strip()
-            if not filiere:
+            cycle = (getattr(request.user, "cycle", "") or "").strip()
+            if not cycle:
                 return Response(
-                    {"detail": "Coordinator filiere is missing."},
+                    {"detail": "Coordinator cycle is missing."},
                     status=status.HTTP_400_BAD_REQUEST,
                 )
-            queryset = StudentRequest.objects.filter(filiere__iexact=filiere)
+            queryset = StudentRequest.objects.filter(cycle__iexact=cycle)
         elif role == "etudiant":
             queryset = StudentRequest.objects.filter(student=request.user)
         else:

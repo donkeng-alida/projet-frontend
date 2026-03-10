@@ -31,3 +31,10 @@ backend/db.sqlite3
 *.pyc
 
 backend/.env
+backend/media/
+
+# Frontend env
+frontend/.env
+
+# Codex / Cursor
+.cursor/
